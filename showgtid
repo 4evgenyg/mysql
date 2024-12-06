@@ -1,0 +1,97 @@
+#!/bin/bash
+# print out the UUIDS with largest GTID executed  and ceertified for the host
+# if in doubt, hostname with largest GTID set should be the primary node after failure of the cluster.
+
+# function to extract biggest gtids executed on specific server for specific UUID's
+function getServerGTIDs() {
+  local str_executed="select @@gtid_executed"
+  local str_certified="SELECT received_transaction_set FROM performance_schema.replication_connection_status WHERE channel_name='group_replication_applier';"
+  local sql_host=${1}
+  local euuids=()
+  local cuuids=()
+  local executed_gtid=$(mysql --login-path=ro -h${sql_host} -e "${str_executed}")
+  local certified_gtid=$(mysql --login-path=ro -h${sql_host} -e "${str_certified}")
+
+  executed_gtid=$(echo -e "${executed_gtid}" | tr '\n' ' ')
+  certified_gtid=$(echo -e "${certified_gtid}" | tr '\n' ' ')
+
+  # Extract UUIDs and transactions
+  local executed_uuids_transactions=$(echo -e "$executed_gtid" | tr ',' '\n')
+  local certified_uuids_transactions=$(echo -e "$certified_gtid" | tr ',' '\n')
+
+  for item in ${executed_uuids_transactions}; do
+    if [[ "${item}" == "@@gtid_executed" ]]; then
+      continue;
+    fi
+    s_uuid=$(echo $item | cut -d: -f1)
+    numbers="${item#*:}"
+    biggest_number=$(echo "$numbers" | sed "s/:/-/g" | tr '-'  '\n'  | sort -nr | head -n 1) #| tr ' ' '\n' | sort -nr | head -n 1)
+    euuids+=("$s_uuid:$biggest_number")
+  done
+  for item in ${certified_uuids_transactions}; do
+    if [[ "${item}" == "received_transaction_set" ]]; then
+      continue;
+    fi
+    s_uuid=$(echo $item | cut -d: -f1)
+    numbers="${item#*:}"
+    biggest_number=$(echo "$numbers" | sed "s/:/-/g" | tr '-'  '\n'  | sort -nr | head -n 1) #| tr ' ' '\n' | sort -nr | head -n 1)
+    cuuids+=("$s_uuid:$biggest_number")
+  done
+  echo  "Executed  by ${sql_host} >  ${euuids[@]}"
+  echo  "Certified by ${sql_host} >  ${cuuids[@]}"
+  echo "${euuids[@]}" >> /tmp/euuid.$$.out
+  echo "${cuuids[@]}" >> /tmp/cuuid.$$.out
+}
+
+function findMaxUUID() {
+  local overall_max_pair=""
+  local overall_max_number=0
+
+  while IFS= read -r line; do
+      pairs=($line)
+      for pair in "${pairs[@]}"; do
+          IFS=':' read -r uuid number <<< "$pair"
+          if ((number > overall_max_number)); then
+              overall_max_pair="$pair"
+              overall_max_number="$number"
+          fi
+      done
+  done < /tmp/euuid.$$.out
+
+  echo "Maximum executed transaction between all UUIDs in the cluster (boot from there): $overall_max_pair"
+  while IFS= read -r line; do
+      pairs=($line)
+      for pair in "${pairs[@]}"; do
+          IFS=':' read -r uuid number <<< "$pair"
+          if ((number > overall_max_number)); then
+              overall_max_pair="$pair"
+              overall_max_number="$number"
+          fi
+      done
+  done < /tmp/cuuid.$$.out
+  echo "Maximum certified transaction between all UUIDs in the cluster (boot from there) : $overall_max_pair"
+}
+
+function getGroupInfo() {
+ local sql_host=${1}
+ gr=$(mysql --login-path=ro -h${sql_host} -Nb -e "select concat('GR name: ', @@group_replication_group_name); select concat('hostname: ', @@hostname), concat('server uuid: ', @@server_uuid)")
+ echo $gr
+}
+
+echo " "
+echo "Group Info: "
+echo "--------------------------------------------- "
+for host in $(<cluster hosts, set it to yours>); do
+  getGroupInfo ${host}
+done
+echo " "
+echo "Max Gtid's executed  and certified by each uuid: (certified > executed, since trx first certified and then executed)"
+echo "--------------------------------------------- "
+for host in $(<cluster hosts, set it to yours>); do
+  getServerGTIDs "${host}"
+echo " "
+echo "--------------------------------------------- "
+done
+echo "When starting cluster ensure GTID's that executed is still active"
+echo "Server with Max Gtid's executed, check again but most probably this is your new boot server: ${host}"
+findMaxUUID
