@@ -25,7 +25,7 @@ function getServerGTIDs() {
     fi
     s_uuid=$(echo $item | cut -d: -f1)
     numbers="${item#*:}"
-    biggest_number=$(echo "$numbers" | sed "s/:/-/g" | tr '-'  '\n'  | sort -nr | head -n 1) #| tr ' ' '\n' | sort -nr | head -n 1)
+    biggest_number=$(echo "$numbers" | sed "s/:/-/g" | tr '-'  '\n'  | sort -nr | head -n 1) 
     euuids+=("$s_uuid:$biggest_number")
   done
   for item in ${certified_uuids_transactions}; do
