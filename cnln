@@ -1,0 +1,16 @@
+#
+#simple shell script to extract connectivity information from old style listener log.
+#probably need some work on output formatting. 
+#loop over each listener that running on the host (can be many)
+for list in $(ps -ef|grep -i inher|grep -v grep| sort| awk '{print $10}'); 
+do
+  echo "LISTENER: ${list}"
+  log_file=$(lsnrctl status $list | grep '^Listener Log File'| awk '{print $NF}')
+
+  #loop over each listener, extract services and for each service print out who, how and from where connected to the DB 
+  for i in $(lsnrctl status $list | grep -w ^Service | awk '{print $2}'|sed 's/"//g');
+  do
+    echo "Database server: ${i}"
+    cat ${log_file} | grep establish | grep $i  | awk -F'[)(]' '{for(i=1;i<=NF;i++) {if($i~/PROGRAM=/) {split($i,a,"="); prog=(length(a[2])>1)?a[2]:"NO PROGRAM"} if($i~/HOST=/) {split($i,b,"="); host=(length(b[2])>1)?b[2]:"NO HOST"} if($i~/USER=/) {split($i,c,"="); user=(length(c[2])>1)?c[2]:"NO USER"} } print prog, host, user}'
+  done |  sort |uniq -c 
+done
